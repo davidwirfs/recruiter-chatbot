@@ -20,13 +20,23 @@ code is identical — only base URL, model name, and API key differ.
 
 Configured providers (in failover order):
   - Gemini     (primary)  — `gemini-3.1-flash-lite` free tier
-  - Groq       (fallback) — `llama-3.3-70b-versatile` free tier
+  - Fallback   (any OpenAI-compatible endpoint) — default OpenRouter
+    Llama 3.3 70B free; configurable via FALLBACK_* env vars to any
+    provider that speaks OpenAI's chat-completions protocol.
 
 A provider with an empty API key is skipped entirely, so the system
-keeps working if only `GEMINI_API_KEY` is set. The Groq URL is
-configurable via `GROQ_URL` so users can swap to Cerebras
-(`https://api.cerebras.ai/v1`) or OpenRouter without a code change —
-useful given v0.4.x hit `invalid_api_key` issues with Groq's own keys.
+keeps working if only `GEMINI_API_KEY` is set.
+
+Why "fallback" is provider-neutral (v0.6.5 lesson):
+  v0.6.0–0.6.4 named this slot "groq" and defaulted to Groq's free tier.
+  In practice, Groq's per-account model gating was opaque — different
+  free accounts had access to different models, and 403 Forbidden was
+  the only signal. v0.6.5 generalized the slot to any OpenAI-compatible
+  endpoint and switched the default to OpenRouter, whose free-model list
+  (https://openrouter.ai/models?max_price=0) is publicly documented and
+  consistent across accounts. The old GROQ_* env vars are still read
+  (backward compat) — if both GROQ_* and FALLBACK_* are set, FALLBACK_*
+  wins.
 
 Uses stdlib urllib only — no extra SDK dependency.
 """
@@ -40,15 +50,49 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Callable, Generator, Optional
+from typing import Any, Callable, Generator, Optional
 
 
-def _build_providers() -> list[dict]:
+def _build_providers() -> list[dict[str, Any]]:
     """Build the ordered provider list from current env vars.
 
     Built lazily (called from stream_chat_with_failover) so tests and
     local development can mutate env vars between requests.
+
+    Fallback config precedence (highest first):
+      1. FALLBACK_* env vars (preferred — provider-neutral naming)
+      2. GROQ_* env vars (backward compat with v0.6.0–0.6.4)
+      3. Code defaults (OpenRouter Llama 3.3 70B free)
     """
+    fallback_url = (
+        os.environ.get("FALLBACK_URL")
+        or os.environ.get("GROQ_URL")
+        or "https://openrouter.ai/api/v1"
+    )
+    fallback_model = (
+        os.environ.get("FALLBACK_MODEL")
+        or os.environ.get("GROQ_MODEL")
+        or "meta-llama/llama-3.3-70b-instruct:free"
+    )
+    fallback_key = (
+        os.environ.get("FALLBACK_API_KEY")
+        or os.environ.get("GROQ_API_KEY", "")
+    )
+
+    # OpenRouter optional analytics headers — harmless against any
+    # OpenAI-compatible endpoint that ignores unknown headers.
+    # See https://openrouter.ai/docs#headers
+    fallback_extra_headers = {
+        "HTTP-Referer": os.environ.get(
+            "FALLBACK_REFERER",
+            "https://davidwirfs-recruiter-chatbot.hf.space",
+        ),
+        "X-Title": os.environ.get(
+            "FALLBACK_TITLE",
+            "David Wirfs Recruiter Chatbot",
+        ),
+    }
+
     return [
         {
             "name": "gemini",
@@ -59,33 +103,32 @@ def _build_providers() -> list[dict]:
             "model": os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
             "api_key": os.environ.get("GEMINI_API_KEY", ""),
             "max_retries": 3,
+            "extra_headers": {},
         },
         {
-            "name": "groq",
-            "url": os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1"),
-            # Code default: llama-3.1-8b-instant — the always-free
-            # workhorse on Groq, reliably available on every free
-            # account including the most restrictive default tier.
-            # Smaller / blunter than Gemini Flash Lite but it works
-            # *everywhere*. This is the safe default.
+            # Provider-neutral slot for any OpenAI-compatible endpoint.
+            # Default targets OpenRouter, whose free-model list
+            # (https://openrouter.ai/models?max_price=0) is publicly
+            # documented and consistent across accounts — unlike Groq's
+            # opaque per-account gating which burned v0.6.0–0.6.4.
             #
-            # Optional upgrades (set GROQ_MODEL env var, then verify
-            # with a /chat test call):
-            #   - openai/gpt-oss-20b — OpenAI's 20B open-weights
-            #     (Aug 2025), output quality close to Gemini.
-            #   - llama-3.3-70b-versatile — Meta's 70B.
-            #   - mixtral-8x7b-32768 — Mistral's 8×7B MoE.
-            #
-            # CAUTION: all three above are gated per-account on Groq's
-            # free tier. The v0.6.0 deploy and the v0.6.3 gpt-oss-20b
-            # experiment both hit 403 Forbidden on the same account.
-            # Don't trust documentation that says "X is on the free
-            # tier" — Groq tier composition varies by account creation
-            # date and any prior usage signals. If a switch returns
-            # 403, just delete the GROQ_MODEL env var to revert.
-            "model": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
-            "api_key": os.environ.get("GROQ_API_KEY", ""),
+            # To swap providers, set FALLBACK_URL + FALLBACK_MODEL +
+            # FALLBACK_API_KEY together. Examples:
+            #   - OpenRouter (default):
+            #       URL=https://openrouter.ai/api/v1
+            #       MODEL=meta-llama/llama-3.3-70b-instruct:free
+            #   - Cerebras:
+            #       URL=https://api.cerebras.ai/v1
+            #       MODEL=llama-3.3-70b
+            #   - Groq (if your account has a working model):
+            #       URL=https://api.groq.com/openai/v1
+            #       MODEL=llama-3.1-8b-instant
+            "name": "fallback",
+            "url": fallback_url,
+            "model": fallback_model,
+            "api_key": fallback_key,
             "max_retries": 2,
+            "extra_headers": fallback_extra_headers,
         },
     ]
 
@@ -96,7 +139,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 
 def _stream_provider(
-    provider: dict,
+    provider: dict[str, Any],
     system_prompt: str,
     user_message: str,
     temperature: float,
@@ -120,13 +163,17 @@ def _stream_provider(
         "temperature": temperature,
     }
     data = json.dumps(payload).encode("utf-8")
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {provider['api_key']}",
+    }
+    # Optional provider-specific extras (e.g. OpenRouter analytics).
+    # Harmless against endpoints that ignore unknown headers.
+    headers.update(provider.get("extra_headers") or {})
     req = urllib.request.Request(
         f"{provider['url']}/chat/completions",
         data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {provider['api_key']}",
-        },
+        headers=headers,
         method="POST",
     )
     try:

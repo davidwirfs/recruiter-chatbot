@@ -74,9 +74,10 @@ chroma/ ← embedded chunks, built INTO the Docker image
 ```
 
 **Stack:** FastAPI · ChromaDB · sentence-transformers/all-MiniLM-L6-v2 ·
-Google Gemini API (`gemini-3.1-flash-lite` by default, with optional
-Groq Llama 3.1 8B Instant failover) · cachetools for response caching ·
-slowapi for rate limiting. Open source. Free tier (~250 req/user/day on Gemini
+Google Gemini API (`gemini-3.1-flash-lite` by default) with optional
+provider-neutral failover (default target: OpenRouter Llama 3.3 70B
+free; configurable to any OpenAI-compatible endpoint) · cachetools
+for response caching · slowapi for rate limiting. Open source. Free tier (~250 req/user/day on Gemini
 plus Groq's free tier as failover) covers any realistic LinkedIn-recruiter
 volume.
 
@@ -125,17 +126,23 @@ YAML frontmatter at the top of this README. Steps:
    - `GEMINI_API_KEY` = your key from
      [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (free tier,
      no billing setup required)
-   - **(Recommended)** `GROQ_API_KEY` = your key from
-     [console.groq.com](https://console.groq.com) — used as automatic
-     failover when Gemini's free-tier backend returns 503/429. Without
-     this set, the chatbot still works but loses one stability layer.
-   - **(Optional, account-dependent)** `GROQ_MODEL` = `openai/gpt-oss-20b`
-     or `llama-3.3-70b-versatile` to upgrade fallback answer quality.
-     These models are gated per-account on Groq's free tier — some
-     accounts have them, others get `403 Forbidden`. **Always test
-     with a `/chat` call** after setting this. If you hit 403, just
-     delete the variable to fall back to the safe code-default
-     `llama-3.1-8b-instant`, which works on every Groq free account.
+   - **(Recommended)** Failover provider — set all three together:
+     - `FALLBACK_API_KEY` = your OpenRouter key from
+       [openrouter.ai/keys](https://openrouter.ai/keys) (free signup,
+       no payment info)
+     - `FALLBACK_URL` = `https://openrouter.ai/api/v1`
+     - `FALLBACK_MODEL` = `meta-llama/llama-3.3-70b-instruct:free`
+       (or any model from [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0))
+
+     OpenRouter's free-model list is publicly documented and consistent
+     across accounts — unlike Groq's per-account gating which we burned
+     several hours on. If you skip the failover, the chatbot still
+     works on Gemini-only, but loses one stability layer.
+
+     Want to use a different provider? Set `FALLBACK_URL` to any
+     OpenAI-compatible endpoint (Cerebras: `https://api.cerebras.ai/v1`,
+     Groq: `https://api.groq.com/openai/v1`, your own self-hosted
+     vLLM, etc.) — the code is provider-neutral.
 3. Connect the Space to this GitHub repo, OR add the Space as a second
    git remote and push:
    ```bash
@@ -192,9 +199,12 @@ container rebuilds with the new content baked in.
 | `GEMINI_API_KEY` | _(required)_ | Your Gemini API key. Set in HF Space → Settings → Variables and secrets. |
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Google's free-tier flash-lite as of May 2026. Alternatives: `gemini-flash-lite-latest` (alias, auto-tracks current free-tier) or `gemini-2.5-flash` (paid account, higher quality). |
 | `GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | Rarely changed. |
-| `GROQ_API_KEY` | _(empty → fallback disabled)_ | **Recommended.** Free key from [console.groq.com](https://console.groq.com). When set, Groq is used as automatic failover whenever Gemini exhausts its retries. |
-| `GROQ_MODEL` | `llama-3.1-8b-instant` | The always-free 8B workhorse — reliably available on every Groq free account, including ones with the most restrictive default tier. Smaller and blunter than Gemini Flash Lite, but it works *everywhere*. Optional upgrades you can try via this env var: `openai/gpt-oss-20b` (OpenAI's 20B open-weights, Aug 2025) or `llama-3.3-70b-versatile` — **both are gated per-account on Groq's free tier and return `403 Forbidden` on some accounts**. Always verify via a test `/chat` call after switching; if you see "All LLM providers exhausted. Last error: HTTP Error 403", revert to the 8B default. |
-| `GROQ_URL` | `https://api.groq.com/openai/v1` | Swap to any OpenAI-compatible free endpoint without a code change — e.g. `https://api.cerebras.ai/v1` (Cerebras free tier) or OpenRouter. Useful escape hatch if Groq's key system misbehaves. |
+| `FALLBACK_API_KEY` | _(empty → fallback disabled)_ | **Recommended.** Free OpenRouter key from [openrouter.ai/keys](https://openrouter.ai/keys). When set, the configured fallback provider is used whenever Gemini exhausts its retries. |
+| `FALLBACK_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible chat-completions endpoint. Examples: OpenRouter (default), `https://api.cerebras.ai/v1`, `https://api.groq.com/openai/v1`, your own self-hosted vLLM. |
+| `FALLBACK_MODEL` | `meta-llama/llama-3.3-70b-instruct:free` | Model name as the chosen provider expects it. OpenRouter free-model catalog: [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0). |
+| `FALLBACK_REFERER` | _(auto)_ | OpenRouter analytics header. Harmless against endpoints that ignore it. Override if you want branded usage. |
+| `FALLBACK_TITLE` | _(auto)_ | OpenRouter analytics header. Same as above. |
+| `GROQ_API_KEY` / `GROQ_URL` / `GROQ_MODEL` | _(backward compat)_ | Old (v0.6.0–0.6.4) env var names. Still read for backward compatibility — but `FALLBACK_*` always wins if both are set. New deployments should use `FALLBACK_*`. |
 | `ANONYMIZED_TELEMETRY` | `false` (set in Dockerfile + scripts) | Disables ChromaDB anonymous telemetry. |
 | `HF_HUB_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops huggingface_hub from pinging HF servers at runtime. |
 | `TRANSFORMERS_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops transformers from version checks at runtime. |
