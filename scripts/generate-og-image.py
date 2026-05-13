@@ -74,8 +74,12 @@ def main() -> None:
     logo_y = 60 - 6
     canvas.paste(logo_resized, (logo_x, logo_y), logo_resized)
 
-    # 3. The question — italic, centered (mirrors live chatbot placeholder)
-    question = "What does he need from his next role?"
+    # 3. The question — italic, centered (mirrors live chatbot placeholder).
+    # Short, present-tense, ship-verb — Steve Jobs solo-mentor-call,
+    # 2026-05-13: "What does he ship?" cuts the previous 38-char prompt to
+    # 18 chars, fits the LinkedIn safe-crop band with room, and asks the
+    # question a recruiter actually wants answered.
+    question = "What does he ship?"
     qbbox = draw.textbbox((0, 0), question, font=font_question)
     qw = qbbox[2] - qbbox[0]
     qh = qbbox[3] - qbbox[1]
