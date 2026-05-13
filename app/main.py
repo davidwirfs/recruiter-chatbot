@@ -1,14 +1,18 @@
 """
-main.py — FastAPI backend for the recruiter chatbot.
+main.py — FastAPI backend for the recruiter chatbot (public-deploy version).
 
 Endpoints:
   GET  /            → serve the chat UI (static/index.html)
-  GET  /health      → health check (Chroma collection + Ollama reachability)
+  GET  /health      → health check (Chroma collection + Groq config)
   POST /chat        → streamed chat answer (text/event-stream)
 
-Run:
-  cd _projects/recruiter-chatbot
-  python -m uvicorn app.main:app --reload --port 8000
+This is the public-deploy variant that talks to Groq's hosted Llama models
+instead of a local Ollama daemon. See app/llm.py for the LLM client; see
+the project root README for the full HF Spaces deployment instructions.
+
+Local development of THIS public-deploy version still works as long as
+GROQ_API_KEY is set in the environment:
+  GROQ_API_KEY=gsk_... python -m uvicorn app.main:app --reload --port 8000
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .ingest import COLLECTION_NAME
-from .llm import OLLAMA_MODEL, health_check, stream_chat
+from .llm import GROQ_MODEL, health_check, stream_chat
 from .prompt import SYSTEM_PROMPT, build_user_message
 from .retriever import _get_collection, retrieve
 
@@ -31,9 +35,10 @@ from .retriever import _get_collection, retrieve
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = PROJECT_ROOT / "static"
 
-app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.1.0")
+app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.4.0")
 
-# CORS open for local dev; tighten before public deploy
+# CORS open for now — will tighten to the actual HF Space hostname once
+# the deploy URL is known (Phase 2b commit covering rate-limiting + CORS).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -57,7 +62,7 @@ def index():
 
 @app.get("/health")
 def health():
-    """Sanity-check Chroma + Ollama before the recruiter sends a message."""
+    """Sanity-check Chroma + Groq configuration before the recruiter sends a message."""
     try:
         coll = _get_collection()
         chroma_ok = True
@@ -68,18 +73,18 @@ def health():
         chunk_count = 0
         chroma_error = str(e)
 
-    ollama = health_check()
+    llm = health_check()
 
     return {
-        "ok": chroma_ok and ollama.get("ollama_reachable", False),
+        "ok": chroma_ok and llm.get("api_key_set", False),
         "chroma": {
             "ok": chroma_ok,
             "collection": COLLECTION_NAME,
             "chunks": chunk_count,
             "error": chroma_error,
         },
-        "ollama": ollama,
-        "model": OLLAMA_MODEL,
+        "llm": llm,
+        "model": GROQ_MODEL,
     }
 
 
