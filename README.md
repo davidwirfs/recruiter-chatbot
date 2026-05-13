@@ -62,7 +62,7 @@ Browser (recruiter)
       │                 │
       ▼                 ▼
 ┌──────────┐      ┌──────────────────────────┐
-│ ChromaDB │      │ Gemini API               │  ← gemini-2.0-flash
+│ ChromaDB │      │ Gemini API               │  ← gemini-3.1-flash-lite
 │ (in-     │      │ (Google, free tier,      │     low latency
 │  image)  │      │  OpenAI-compatible)      │     overridable via env
 └────┬─────┘      └──────────────────────────┘
@@ -73,8 +73,9 @@ chroma/ ← embedded chunks, built INTO the Docker image
 ```
 
 **Stack:** FastAPI · ChromaDB · sentence-transformers/all-MiniLM-L6-v2 ·
-Google Gemini API (`gemini-2.0-flash` by default) · slowapi for rate limiting.
-Open source. Free tier covers any realistic LinkedIn-recruiter volume.
+Google Gemini API (`gemini-3.1-flash-lite` by default) · slowapi for rate
+limiting. Open source. Free tier (~250 req/user/day) covers any realistic
+LinkedIn-recruiter volume.
 
 There is a separate **local development version** that swaps the Gemini
 LLM call for a local Ollama daemon — that lives in the parent project
@@ -85,6 +86,11 @@ variant.
 > deploy we hit repeated `invalid_api_key` rejections from Groq despite
 > freshly-created keys and correctly-passed env vars. We swapped to Gemini
 > in v0.5.0 — same OpenAI-compatible interface, more reliable free tier.
+>
+> **Why `gemini-3.1-flash-lite`, not `gemini-2.0-flash`:** v0.5.0 used
+> `gemini-2.0-flash` as the default. By May 2026 Google had moved that
+> model to paid-tier-only (free-tier keys get `429 limit:0`). v0.5.1
+> swapped to `gemini-3.1-flash-lite`, Google's current free-tier model.
 
 ---
 
@@ -157,7 +163,7 @@ container rebuilds with the new content baked in.
 | Env var | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | _(required)_ | Your Gemini API key. Set in HF Space → Settings → Variables and secrets. |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Alternatives: `gemini-2.5-flash` (newer, higher quality) or `gemini-1.5-flash` (older fallback). |
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Google's free-tier flash-lite as of May 2026. Alternatives: `gemini-flash-lite-latest` (alias, auto-tracks current free-tier) or `gemini-2.5-flash` (paid account, higher quality). |
 | `GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | Rarely changed. |
 | `ANONYMIZED_TELEMETRY` | `false` (set in Dockerfile + scripts) | Disables ChromaDB anonymous telemetry. |
 | `HF_HUB_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops huggingface_hub from pinging HF servers at runtime. |
@@ -192,10 +198,12 @@ information.
 - **Chunking:** LangChain `RecursiveCharacterTextSplitter`, 800 chars
   with 100 overlap. Markdown source files preserved structural boundaries
   through chunking far better than PDFs did.
-- **LLM:** `gemini-2.0-flash` via Google's OpenAI-compatible Gemini
-  streaming API. Free tier as of mid-2026: ~15 req/min, ~1M tok/min,
-  ~1,500 req/day — far more than enough for a LinkedIn-driven recruiter
-  chatbot.
+- **LLM:** `gemini-3.1-flash-lite` via Google's OpenAI-compatible Gemini
+  streaming API. Free tier as of May 2026: ~250 requests per user per day
+  on `gemini-3.1-flash-lite` — far more than enough for a LinkedIn-driven
+  recruiter chatbot. (Google moved `gemini-2.0-flash` and earlier models
+  to paid-tier-only sometime in 2026, hence the explicit flash-lite
+  default.)
 - **Rate limiting:** slowapi, 20 req/hour per real client IP (parsed
   from `X-Forwarded-For` to defeat HF Spaces' reverse-proxy IP collapse).
 - **Input length cap:** 500 chars, enforced by pydantic before the

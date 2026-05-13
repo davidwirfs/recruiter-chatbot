@@ -2,25 +2,30 @@
 llm.py — Gemini LLM client (HuggingFace Spaces / public-deploy version).
 
 Replaces the local Ollama client used in the development version with a call
-to Google's Gemini API via its OpenAI-compatible streaming endpoint. Gemini's
-free tier is generous and well-trodden — ~15 RPM and 1,500 requests/day on
-`gemini-2.0-flash`, more than enough for a LinkedIn-facing recruiter chatbot.
+to Google's Gemini API via its OpenAI-compatible streaming endpoint.
 
 Why Gemini (and not Groq, the previous default): Groq's account/key system
 caused repeated `invalid_api_key` rejections during the v0.4.x deploy despite
 freshly-created valid keys and correct env-var passing through HF Spaces.
-Gemini's free tier is well-trodden, doesn't have those issues, and its
-OpenAI-compatible endpoint means the existing streaming code keeps working
-with minimal changes.
+Gemini's OpenAI-compatible endpoint accepts the same streaming code with
+minimal changes.
 
 Requires GEMINI_API_KEY in the environment. On HuggingFace Spaces this is set
 once via:  Space → Settings → Variables and secrets → New secret → GEMINI_API_KEY.
 Get a free key at https://aistudio.google.com/apikey (no billing setup needed
 for the free tier).
 
-Default model: `gemini-2.0-flash` — fast, low-latency, free tier. Override
-via the GEMINI_MODEL env var (e.g. `gemini-2.5-flash` for higher answer
-quality if available on your account, or `gemini-1.5-flash` as a fallback).
+Default model: `gemini-3.1-flash-lite` — Google's free-tier flash-lite model
+as of May 2026. The earlier `gemini-2.0-flash` (v0.5.0 default) was moved to
+paid-tier-only sometime in 2026, returning `429 limit:0` for free-tier keys —
+hence the v0.5.1 swap. Free-tier cap on 3.1-flash-lite: ~250 requests per
+user per day, more than enough for a LinkedIn-driven recruiter chatbot.
+
+Override via the GEMINI_MODEL env var:
+  - `gemini-flash-lite-latest` — alias that auto-tracks the current
+    free-tier flash-lite (may silently update when Google releases new
+    versions; trade-off between freshness and predictability).
+  - `gemini-2.5-flash` — higher quality but requires a paid account.
 
 Uses stdlib urllib only — no extra SDK dependency.
 """
@@ -36,7 +41,7 @@ GEMINI_URL = os.environ.get(
     "GEMINI_URL",
     "https://generativelanguage.googleapis.com/v1beta/openai",
 )
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 

@@ -7,9 +7,11 @@
 # Required env vars (set in Space → Settings → Variables and secrets):
 #   GEMINI_API_KEY  — your Gemini API key (free tier, aistudio.google.com/apikey)
 # Optional overrides:
-#   GEMINI_MODEL    — default "gemini-2.0-flash"; alternatives include
-#                     "gemini-2.5-flash" (newer, higher quality if available
-#                     on your account) or "gemini-1.5-flash" (older fallback).
+#   GEMINI_MODEL    — default "gemini-3.1-flash-lite" (Google's free-tier
+#                     flash-lite as of May 2026; ~250 req/user/day cap).
+#                     Alternatives: "gemini-flash-lite-latest" (alias,
+#                     auto-tracks current free-tier), "gemini-2.5-flash"
+#                     (paid account, higher quality).
 #   GEMINI_URL      — default "https://generativelanguage.googleapis.com/v1beta/openai";
 #                     rarely changed.
 
