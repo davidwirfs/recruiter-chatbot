@@ -63,12 +63,22 @@ def _build_providers() -> list[dict]:
         {
             "name": "groq",
             "url": os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1"),
-            # llama-3.1-8b-instant is the always-free workhorse on Groq —
-            # smaller than the 70B but reliably available on every free
-            # account. Larger models (llama-3.3-70b-versatile, mixtral)
-            # have been moved in and out of the paid tier; defaulting to
-            # the 8B avoids the v0.6.0 deploy issue where the 70B
-            # returned 403 Forbidden for free-tier keys.
+            # Code default: llama-3.1-8b-instant — the always-free
+            # workhorse on Groq, reliably available on every free
+            # account. Safe fallback if no override is set.
+            #
+            # Recommended override (set GROQ_MODEL in HF Space settings):
+            #   openai/gpt-oss-20b  →  OpenAI's open-weights 20B model
+            #   (Aug 2025), on Groq's free tier, quality much closer
+            #   to Gemini Flash Lite than the 8B. With this set, the
+            #   fallback path doesn't feel like a quality regression
+            #   when Gemini's free tier hiccups.
+            #
+            # Avoid: llama-3.3-70b-versatile, mixtral-8x7b-32768 —
+            # both have been moved in and out of paid-tier-only;
+            # the v0.6.0 deploy hit 403 Forbidden on the 70B with a
+            # free key. Only use these if your account has confirmed
+            # access.
             "model": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
             "api_key": os.environ.get("GROQ_API_KEY", ""),
             "max_retries": 2,
