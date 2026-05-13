@@ -62,7 +62,13 @@ def _build_providers() -> list[dict]:
         {
             "name": "groq",
             "url": os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1"),
-            "model": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            # llama-3.1-8b-instant is the always-free workhorse on Groq —
+            # smaller than the 70B but reliably available on every free
+            # account. Larger models (llama-3.3-70b-versatile, mixtral)
+            # have been moved in and out of the paid tier; defaulting to
+            # the 8B avoids the v0.6.0 deploy issue where the 70B
+            # returned 403 Forbidden for free-tier keys.
+            "model": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
             "api_key": os.environ.get("GROQ_API_KEY", ""),
             "max_retries": 2,
         },
@@ -82,9 +88,12 @@ def _stream_provider(
 ) -> Generator[str, None, None]:
     """Stream tokens from one OpenAI-compatible provider.
 
-    Raises urllib.error.HTTPError on non-2xx, URLError/TimeoutError on
-    network failure. The caller (stream_chat_with_failover) decides
-    whether to retry or fail over based on the exception type.
+    Raises urllib.error.HTTPError on non-2xx (with the response body
+    attached to .reason for diagnostics — provider error bodies often
+    explain *why* a 403/401/429 happened, e.g. "model not available
+    on your tier"), URLError/TimeoutError on network failure. The
+    caller (stream_chat_with_failover) decides whether to retry or
+    fail over based on the exception type.
     """
     payload = {
         "model": provider["model"],
@@ -105,7 +114,21 @@ def _stream_provider(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    try:
+        resp_cm = urllib.request.urlopen(req, timeout=120)
+    except urllib.error.HTTPError as e:
+        # Read the response body so a future caller (or operator
+        # tailing logs) can see *why* the provider rejected us.
+        # Without this, a 403 from Groq looks identical regardless
+        # of cause (bad key vs. model-not-available vs. quota).
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            body = ""
+        if body:
+            e.reason = f"{e.reason} | body: {body}"
+        raise
+    with resp_cm as resp:
         for raw_line in resp:
             line = raw_line.decode("utf-8").strip()
             # SSE protocol: skip empty keepalive lines and non-data events

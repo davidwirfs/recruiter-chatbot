@@ -75,8 +75,8 @@ chroma/ ← embedded chunks, built INTO the Docker image
 
 **Stack:** FastAPI · ChromaDB · sentence-transformers/all-MiniLM-L6-v2 ·
 Google Gemini API (`gemini-3.1-flash-lite` by default, with optional
-Groq Llama 3.3 70B failover) · cachetools for response caching · slowapi
-for rate limiting. Open source. Free tier (~250 req/user/day on Gemini
+Groq Llama 3.1 8B Instant failover) · cachetools for response caching ·
+slowapi for rate limiting. Open source. Free tier (~250 req/user/day on Gemini
 plus Groq's free tier as failover) covers any realistic LinkedIn-recruiter
 volume.
 
@@ -186,7 +186,7 @@ container rebuilds with the new content baked in.
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Google's free-tier flash-lite as of May 2026. Alternatives: `gemini-flash-lite-latest` (alias, auto-tracks current free-tier) or `gemini-2.5-flash` (paid account, higher quality). |
 | `GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | Rarely changed. |
 | `GROQ_API_KEY` | _(empty → fallback disabled)_ | **Recommended.** Free key from [console.groq.com](https://console.groq.com). When set, Groq is used as automatic failover whenever Gemini exhausts its retries. |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Free-tier Groq model. Other options: `llama-3.1-8b-instant` (faster, smaller), `mixtral-8x7b-32768`. |
+| `GROQ_MODEL` | `llama-3.1-8b-instant` | Always-free workhorse model on Groq's free tier. Larger options (`llama-3.3-70b-versatile`, `mixtral-8x7b-32768`) have moved in and out of paid-tier-only — 8B is the reliable default. Override if your account has 70B access. |
 | `GROQ_URL` | `https://api.groq.com/openai/v1` | Swap to any OpenAI-compatible free endpoint without a code change — e.g. `https://api.cerebras.ai/v1` (Cerebras free tier) or OpenRouter. Useful escape hatch if Groq's key system misbehaves. |
 | `ANONYMIZED_TELEMETRY` | `false` (set in Dockerfile + scripts) | Disables ChromaDB anonymous telemetry. |
 | `HF_HUB_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops huggingface_hub from pinging HF servers at runtime. |
