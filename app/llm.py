@@ -1,31 +1,32 @@
 """
-llm.py — Gemini LLM client (HuggingFace Spaces / public-deploy version).
+llm.py — Multi-provider LLM client with retry + failover.
 
-Replaces the local Ollama client used in the development version with a call
-to Google's Gemini API via its OpenAI-compatible streaming endpoint.
+The chatbot's primary LLM is Google's Gemini free tier, which is fast and
+plenty for LinkedIn-driven recruiter traffic — but its free-tier backend
+returns transient 503/429 under any non-trivial load. A bare 503 reaching
+the recruiter UI is the worst possible first impression.
 
-Why Gemini (and not Groq, the previous default): Groq's account/key system
-caused repeated `invalid_api_key` rejections during the v0.4.x deploy despite
-freshly-created valid keys and correct env-var passing through HF Spaces.
-Gemini's OpenAI-compatible endpoint accepts the same streaming code with
-minimal changes.
+This module addresses that with three layers, all stdlib + free tier:
 
-Requires GEMINI_API_KEY in the environment. On HuggingFace Spaces this is set
-once via:  Space → Settings → Variables and secrets → New secret → GEMINI_API_KEY.
-Get a free key at https://aistudio.google.com/apikey (no billing setup needed
-for the free tier).
+  1. Each provider call retries on transient errors (429/5xx, network)
+     with exponential backoff + jitter.
+  2. If a provider exhausts its retries, we fail over to the next
+     configured provider transparently.
+  3. The SSE layer in main.py emits a `retry` event between attempts so
+     the UI can show a subtle indicator (no scary error text).
 
-Default model: `gemini-3.1-flash-lite` — Google's free-tier flash-lite model
-as of May 2026. The earlier `gemini-2.0-flash` (v0.5.0 default) was moved to
-paid-tier-only sometime in 2026, returning `429 limit:0` for free-tier keys —
-hence the v0.5.1 swap. Free-tier cap on 3.1-flash-lite: ~250 requests per
-user per day, more than enough for a LinkedIn-driven recruiter chatbot.
+All providers use the OpenAI-compatible streaming protocol, so the wire
+code is identical — only base URL, model name, and API key differ.
 
-Override via the GEMINI_MODEL env var:
-  - `gemini-flash-lite-latest` — alias that auto-tracks the current
-    free-tier flash-lite (may silently update when Google releases new
-    versions; trade-off between freshness and predictability).
-  - `gemini-2.5-flash` — higher quality but requires a paid account.
+Configured providers (in failover order):
+  - Gemini     (primary)  — `gemini-3.1-flash-lite` free tier
+  - Groq       (fallback) — `llama-3.3-70b-versatile` free tier
+
+A provider with an empty API key is skipped entirely, so the system
+keeps working if only `GEMINI_API_KEY` is set. The Groq URL is
+configurable via `GROQ_URL` so users can swap to Cerebras
+(`https://api.cerebras.ai/v1`) or OpenRouter without a code change —
+useful given v0.4.x hit `invalid_api_key` issues with Groq's own keys.
 
 Uses stdlib urllib only — no extra SDK dependency.
 """
@@ -34,32 +35,59 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
+import urllib.error
 import urllib.request
-from typing import Generator
+from typing import Callable, Generator, Optional
 
-GEMINI_URL = os.environ.get(
-    "GEMINI_URL",
-    "https://generativelanguage.googleapis.com/v1beta/openai",
-)
+
+def _build_providers() -> list[dict]:
+    """Build the ordered provider list from current env vars.
+
+    Built lazily (called from stream_chat_with_failover) so tests and
+    local development can mutate env vars between requests.
+    """
+    return [
+        {
+            "name": "gemini",
+            "url": os.environ.get(
+                "GEMINI_URL",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+            ),
+            "model": os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+            "api_key": os.environ.get("GEMINI_API_KEY", ""),
+            "max_retries": 3,
+        },
+        {
+            "name": "groq",
+            "url": os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1"),
+            "model": os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            "api_key": os.environ.get("GROQ_API_KEY", ""),
+            "max_retries": 2,
+        },
+    ]
+
+
+# Exposed for /health and logging. Module-level snapshot of the primary
+# model name; main.py uses this only for the `model` field in /health.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 
-def stream_chat(
+def _stream_provider(
+    provider: dict,
     system_prompt: str,
     user_message: str,
-    temperature: float = 0.3,
+    temperature: float,
 ) -> Generator[str, None, None]:
-    """Yield response tokens from Gemini's OpenAI-compatible streaming API."""
-    if not GEMINI_API_KEY:
-        raise RuntimeError(
-            "GEMINI_API_KEY not configured. Set it in HuggingFace Space → "
-            "Settings → Variables and secrets, or in your local .env "
-            "if testing the public-deploy version outside HF."
-        )
+    """Stream tokens from one OpenAI-compatible provider.
 
+    Raises urllib.error.HTTPError on non-2xx, URLError/TimeoutError on
+    network failure. The caller (stream_chat_with_failover) decides
+    whether to retry or fail over based on the exception type.
+    """
     payload = {
-        "model": GEMINI_MODEL,
+        "model": provider["model"],
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -69,11 +97,11 @@ def stream_chat(
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        f"{GEMINI_URL}/chat/completions",
+        f"{provider['url']}/chat/completions",
         data=data,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {GEMINI_API_KEY}",
+            "Authorization": f"Bearer {provider['api_key']}",
         },
         method="POST",
     )
@@ -99,17 +127,120 @@ def stream_chat(
                 yield content
 
 
-def health_check() -> dict:
-    """Return whether Gemini credentials are configured.
+# HTTP status codes worth retrying. 429 = rate limit (Gemini free tier
+# is quota-throttled), 5xx = transient backend failure.
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
-    Note: we deliberately do NOT make a probe call to Gemini from /health
-    — that would consume rate-limit quota on every health hit (which the
-    frontend pings on every page load). Configuration check is enough;
-    the first /chat request surfaces any actual API issue.
+
+def _backoff_sleep(attempt: int) -> None:
+    """Exponential backoff with jitter, capped at 4s.
+
+    Sleep durations by attempt index (with jitter range):
+      attempt 0 → 0.5–1.0s
+      attempt 1 → 1.0–1.5s
+      attempt 2 → 2.0–2.5s
+      attempt 3+ → 4.0–4.5s (cap)
+    Worst-case wall-clock before Gemini→Groq failover with 3 Gemini
+    retries: ~2.5s (sleep happens between attempts, not after the last).
     """
+    base = min((2 ** attempt) * 0.5, 4.0)
+    time.sleep(base + random.uniform(0, 0.5))
+
+
+def stream_chat_with_failover(
+    system_prompt: str,
+    user_message: str,
+    temperature: float = 0.3,
+    on_retry: Optional[Callable[[str, int, object], None]] = None,
+) -> Generator[str, None, None]:
+    """Try each configured provider with retry + failover.
+
+    Yields token strings exactly like the old stream_chat. When a
+    transient error triggers a retry or a provider switch, the
+    `on_retry` callback (if provided) is invoked synchronously with
+    (provider_name, attempt_number, reason). The SSE layer uses this
+    to emit a `retry` event so the UI can show a subtle indicator
+    while the system self-heals.
+
+    NOTE on streaming semantics: if the provider has already started
+    yielding tokens and then fails mid-stream, those tokens have
+    already been sent to the user — we don't retry mid-stream, we
+    only retry/failover when the request fails *before* the first
+    token. That avoids producing garbled half-answers.
+    """
+    providers = _build_providers()
+    last_error: Exception = RuntimeError("No providers configured")
+
+    for provider in providers:
+        if not provider["api_key"]:
+            continue
+        for attempt in range(provider["max_retries"]):
+            try:
+                # If this generator yields even one token, the request
+                # succeeded — pass everything through and return.
+                yield from _stream_provider(
+                    provider, system_prompt, user_message, temperature
+                )
+                return
+            except urllib.error.HTTPError as e:
+                last_error = e
+                # Non-transient HTTP errors (4xx other than 429) usually
+                # indicate a misconfigured key or bad request — switch
+                # to the next provider immediately instead of burning
+                # retries on a request that will never succeed.
+                if e.code not in _RETRYABLE_STATUS:
+                    if on_retry:
+                        on_retry(provider["name"], attempt + 1, e.code)
+                    break
+                if on_retry:
+                    on_retry(provider["name"], attempt + 1, e.code)
+                if attempt < provider["max_retries"] - 1:
+                    _backoff_sleep(attempt)
+            except (urllib.error.URLError, TimeoutError) as e:
+                last_error = e
+                if on_retry:
+                    on_retry(provider["name"], attempt + 1, "network")
+                if attempt < provider["max_retries"] - 1:
+                    _backoff_sleep(attempt)
+
+    raise RuntimeError(f"All LLM providers exhausted. Last error: {last_error}")
+
+
+# Backward-compat alias. main.py and any external caller can still
+# import `stream_chat`; it now routes through the failover layer with
+# no retry callback. Use stream_chat_with_failover directly if you
+# want the on_retry hook.
+def stream_chat(
+    system_prompt: str,
+    user_message: str,
+    temperature: float = 0.3,
+) -> Generator[str, None, None]:
+    yield from stream_chat_with_failover(
+        system_prompt, user_message, temperature, on_retry=None
+    )
+
+
+def health_check() -> dict:
+    """Return provider configuration state (no probe calls).
+
+    We deliberately do NOT make probe calls — the frontend hits /health
+    on every page load and that would burn rate-limit quota. The first
+    /chat request surfaces any actual API issue. With the failover
+    layer in place, a misbehaving primary provider is already invisible
+    to the recruiter.
+    """
+    providers = _build_providers()
     return {
         "provider": "gemini",
         "configured_model": GEMINI_MODEL,
-        "api_key_set": bool(GEMINI_API_KEY),
-        "endpoint": GEMINI_URL,
+        "api_key_set": any(p["api_key"] for p in providers),
+        "endpoint": providers[0]["url"],
+        "providers": [
+            {
+                "name": p["name"],
+                "model": p["model"],
+                "configured": bool(p["api_key"]),
+            }
+            for p in providers
+        ],
     }

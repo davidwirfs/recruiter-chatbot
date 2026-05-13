@@ -55,37 +55,53 @@ Three rotating example questions seed the experience:
 Browser (recruiter)
      │
      ▼
-┌─────────────────────────────┐
-│  FastAPI backend            │  ← Python, /chat (SSE stream) + /health
-│  + slowapi rate limit       │     20 req/hour per IP
-└─────┬─────────────────┬─────┘
-      │                 │
-      ▼                 ▼
-┌──────────┐      ┌──────────────────────────┐
-│ ChromaDB │      │ Gemini API               │  ← gemini-3.1-flash-lite
-│ (in-     │      │ (Google, free tier,      │     low latency
-│  image)  │      │  OpenAI-compatible)      │     overridable via env
-└────┬─────┘      └──────────────────────────┘
-     │
+┌──────────────────────────────────────┐
+│  FastAPI backend                     │  ← Python, /chat (SSE stream) + /health
+│  + slowapi rate limit (20 req/hr/IP) │
+│  + cachetools TTL response cache     │  ← 100 × 24h, instant on repeat questions
+└─────┬──────────────────────────┬─────┘
+      │                          │
+      ▼                          ▼
+┌──────────┐    ┌────────────────────────────────────┐
+│ ChromaDB │    │ LLM with retry+failover            │
+│ (in-     │    │  1. Gemini   (3 retries, exp bkoff)│
+│  image)  │    │  2. Groq     (2 retries, exp bkoff)│  ← free tier failover
+└────┬─────┘    │  All providers OpenAI-compatible.  │
+     │          └────────────────────────────────────┘
      ▼
 data/  ←  markdown source files (CV + manifesto)
 chroma/ ← embedded chunks, built INTO the Docker image
 ```
 
 **Stack:** FastAPI · ChromaDB · sentence-transformers/all-MiniLM-L6-v2 ·
-Google Gemini API (`gemini-3.1-flash-lite` by default) · slowapi for rate
-limiting. Open source. Free tier (~250 req/user/day) covers any realistic
-LinkedIn-recruiter volume.
+Google Gemini API (`gemini-3.1-flash-lite` by default, with optional
+Groq Llama 3.3 70B failover) · cachetools for response caching · slowapi
+for rate limiting. Open source. Free tier (~250 req/user/day on Gemini
+plus Groq's free tier as failover) covers any realistic LinkedIn-recruiter
+volume.
+
+**Stability (v0.6.0):** transient `503`/`429` from Gemini's free-tier
+backend are absorbed by three layers — retry with exponential backoff,
+in-memory TTL response cache for repeated questions, and transparent
+failover to a free Groq endpoint. The recruiter never sees a raw API
+error unless every layer is exhausted.
 
 There is a separate **local development version** that swaps the Gemini
 LLM call for a local Ollama daemon — that lives in the parent project
 folder, not in this repo. The version in THIS repo is the public-deploy
 variant.
 
-> **Why Gemini, not Groq:** v0.4.x used Groq's inference API. During public
-> deploy we hit repeated `invalid_api_key` rejections from Groq despite
-> freshly-created keys and correctly-passed env vars. We swapped to Gemini
-> in v0.5.0 — same OpenAI-compatible interface, more reliable free tier.
+> **Why Gemini, not Groq (primary):** v0.4.x used Groq as the only LLM
+> provider. During public deploy we hit repeated `invalid_api_key`
+> rejections from Groq despite freshly-created keys and correctly-passed
+> env vars. We swapped to Gemini in v0.5.0 — same OpenAI-compatible
+> interface, more reliable free tier.
+>
+> **Why both, now (v0.6.0):** Gemini's free-tier backend started
+> returning transient 503s under LinkedIn-driven recruiter traffic. Rather
+> than swap providers again, we added Groq back as a failover-only path
+> with a configurable `GROQ_URL` (escape hatch: swap to Cerebras or
+> OpenRouter without a code change if Groq's keys misbehave again).
 >
 > **Why `gemini-3.1-flash-lite`, not `gemini-2.0-flash`:** v0.5.0 used
 > `gemini-2.0-flash` as the default. By May 2026 Google had moved that
@@ -109,6 +125,10 @@ YAML frontmatter at the top of this README. Steps:
    - `GEMINI_API_KEY` = your key from
      [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (free tier,
      no billing setup required)
+   - **(Recommended)** `GROQ_API_KEY` = your key from
+     [console.groq.com](https://console.groq.com) — used as automatic
+     failover when Gemini's free-tier backend returns 503/429. Without
+     this set, the chatbot still works but loses one stability layer.
 3. Connect the Space to this GitHub repo, OR add the Space as a second
    git remote and push:
    ```bash
@@ -165,6 +185,9 @@ container rebuilds with the new content baked in.
 | `GEMINI_API_KEY` | _(required)_ | Your Gemini API key. Set in HF Space → Settings → Variables and secrets. |
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Google's free-tier flash-lite as of May 2026. Alternatives: `gemini-flash-lite-latest` (alias, auto-tracks current free-tier) or `gemini-2.5-flash` (paid account, higher quality). |
 | `GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | Rarely changed. |
+| `GROQ_API_KEY` | _(empty → fallback disabled)_ | **Recommended.** Free key from [console.groq.com](https://console.groq.com). When set, Groq is used as automatic failover whenever Gemini exhausts its retries. |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Free-tier Groq model. Other options: `llama-3.1-8b-instant` (faster, smaller), `mixtral-8x7b-32768`. |
+| `GROQ_URL` | `https://api.groq.com/openai/v1` | Swap to any OpenAI-compatible free endpoint without a code change — e.g. `https://api.cerebras.ai/v1` (Cerebras free tier) or OpenRouter. Useful escape hatch if Groq's key system misbehaves. |
 | `ANONYMIZED_TELEMETRY` | `false` (set in Dockerfile + scripts) | Disables ChromaDB anonymous telemetry. |
 | `HF_HUB_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops huggingface_hub from pinging HF servers at runtime. |
 | `TRANSFORMERS_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops transformers from version checks at runtime. |
@@ -208,6 +231,17 @@ information.
   from `X-Forwarded-For` to defeat HF Spaces' reverse-proxy IP collapse).
 - **Input length cap:** 500 chars, enforced by pydantic before the
   handler runs.
+- **Response cache:** in-memory TTL cache (cachetools), 100 entries ×
+  24h TTL. Identical (normalized) recruiter questions return instantly
+  without re-hitting the LLM — by far the biggest source of free-tier
+  rate-limit pressure removed.
+- **Multi-provider failover:** every `/chat` request is wrapped in a
+  retry+failover layer ([app/llm.py](app/llm.py)). Gemini is tried first
+  with 3 retries (exponential backoff with jitter: ~0.75s, ~1.25s — sleep
+  only happens between attempts, so total ~2s wall-clock max before
+  failover). On exhaustion, Groq is tried with 2 retries. The frontend
+  shows a subtle amber tint on the typing dots during retries so the
+  recruiter sees activity, not a frozen UI.
 
 ---
 

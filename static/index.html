@@ -139,9 +139,17 @@
     border-radius: 50%;
     background: var(--text-tertiary);
     animation: pulse 1.4s infinite ease-in-out;
+    transition: background-color 0.4s ease;
   }
   .typing span:nth-child(2) { animation-delay: 0.2s; }
   .typing span:nth-child(3) { animation-delay: 0.4s; }
+  /* Retry tint: when the backend signals it's retrying or failing over
+     to a backup LLM provider, the typing dots gain a soft amber tint
+     for ~2s, then fade back. Communicates "system is self-healing"
+     without showing a scary error to the recruiter. */
+  .typing.retrying span {
+    background: #d97706;
+  }
   @keyframes pulse {
     0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
     40% { opacity: 1; transform: scale(1); }
@@ -397,6 +405,17 @@ async function send(text) {
 
         if (evt.type === "citations") {
           citations = evt.citations || [];
+        } else if (evt.type === "retry") {
+          // Backend is retrying or failing over to a backup LLM
+          // provider. Tint the typing dots amber for ~2s so the
+          // recruiter sees the system working, not a frozen UI.
+          if (!typingRemoved && typing) {
+            typing.classList.add("retrying");
+            setTimeout(() => typing.classList.remove("retrying"), 2000);
+          }
+        } else if (evt.type === "cache") {
+          // Cache hit — no UI change needed, but useful for debugging
+          // via DevTools. Recruiter just sees an instant answer.
         } else if (evt.type === "token") {
           if (!typingRemoved) {
             a.removeChild(typing);
