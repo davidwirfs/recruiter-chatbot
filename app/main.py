@@ -113,7 +113,7 @@ def real_client_ip(request: Request) -> str:
 
 limiter = Limiter(key_func=real_client_ip)
 
-app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.6.3")
+app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.6.4")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

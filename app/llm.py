@@ -65,20 +65,24 @@ def _build_providers() -> list[dict]:
             "url": os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1"),
             # Code default: llama-3.1-8b-instant — the always-free
             # workhorse on Groq, reliably available on every free
-            # account. Safe fallback if no override is set.
+            # account including the most restrictive default tier.
+            # Smaller / blunter than Gemini Flash Lite but it works
+            # *everywhere*. This is the safe default.
             #
-            # Recommended override (set GROQ_MODEL in HF Space settings):
-            #   openai/gpt-oss-20b  →  OpenAI's open-weights 20B model
-            #   (Aug 2025), on Groq's free tier, quality much closer
-            #   to Gemini Flash Lite than the 8B. With this set, the
-            #   fallback path doesn't feel like a quality regression
-            #   when Gemini's free tier hiccups.
+            # Optional upgrades (set GROQ_MODEL env var, then verify
+            # with a /chat test call):
+            #   - openai/gpt-oss-20b — OpenAI's 20B open-weights
+            #     (Aug 2025), output quality close to Gemini.
+            #   - llama-3.3-70b-versatile — Meta's 70B.
+            #   - mixtral-8x7b-32768 — Mistral's 8×7B MoE.
             #
-            # Avoid: llama-3.3-70b-versatile, mixtral-8x7b-32768 —
-            # both have been moved in and out of paid-tier-only;
-            # the v0.6.0 deploy hit 403 Forbidden on the 70B with a
-            # free key. Only use these if your account has confirmed
-            # access.
+            # CAUTION: all three above are gated per-account on Groq's
+            # free tier. The v0.6.0 deploy and the v0.6.3 gpt-oss-20b
+            # experiment both hit 403 Forbidden on the same account.
+            # Don't trust documentation that says "X is on the free
+            # tier" — Groq tier composition varies by account creation
+            # date and any prior usage signals. If a switch returns
+            # 403, just delete the GROQ_MODEL env var to revert.
             "model": os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
             "api_key": os.environ.get("GROQ_API_KEY", ""),
             "max_retries": 2,

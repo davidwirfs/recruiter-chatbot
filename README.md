@@ -129,12 +129,13 @@ YAML frontmatter at the top of this README. Steps:
      [console.groq.com](https://console.groq.com) — used as automatic
      failover when Gemini's free-tier backend returns 503/429. Without
      this set, the chatbot still works but loses one stability layer.
-   - **(Recommended)** `GROQ_MODEL` = `openai/gpt-oss-20b` — overrides
-     the code-default `llama-3.1-8b-instant` with OpenAI's 20B
-     open-weights model on Groq's free tier. Quality of the fallback
-     path is then much closer to Gemini Flash Lite. If you skip this,
-     the fallback still works on the 8B; it'll just sound a bit blunter
-     than Gemini answers when Gemini is down.
+   - **(Optional, account-dependent)** `GROQ_MODEL` = `openai/gpt-oss-20b`
+     or `llama-3.3-70b-versatile` to upgrade fallback answer quality.
+     These models are gated per-account on Groq's free tier — some
+     accounts have them, others get `403 Forbidden`. **Always test
+     with a `/chat` call** after setting this. If you hit 403, just
+     delete the variable to fall back to the safe code-default
+     `llama-3.1-8b-instant`, which works on every Groq free account.
 3. Connect the Space to this GitHub repo, OR add the Space as a second
    git remote and push:
    ```bash
@@ -192,7 +193,7 @@ container rebuilds with the new content baked in.
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Google's free-tier flash-lite as of May 2026. Alternatives: `gemini-flash-lite-latest` (alias, auto-tracks current free-tier) or `gemini-2.5-flash` (paid account, higher quality). |
 | `GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | Rarely changed. |
 | `GROQ_API_KEY` | _(empty → fallback disabled)_ | **Recommended.** Free key from [console.groq.com](https://console.groq.com). When set, Groq is used as automatic failover whenever Gemini exhausts its retries. |
-| `GROQ_MODEL` | `llama-3.1-8b-instant` | Code default is the always-free 8B workhorse — safest if you haven't picked a model. **Recommended override: `openai/gpt-oss-20b`** (OpenAI's 20B open-weights model, Aug 2025; on Groq's free tier, ~750 tok/s, output quality much closer to Gemini Flash Lite than the 8B). Larger options (`llama-3.3-70b-versatile`, `mixtral-8x7b-32768`) have moved in and out of paid-tier-only — only use them if your account has confirmed access. |
+| `GROQ_MODEL` | `llama-3.1-8b-instant` | The always-free 8B workhorse — reliably available on every Groq free account, including ones with the most restrictive default tier. Smaller and blunter than Gemini Flash Lite, but it works *everywhere*. Optional upgrades you can try via this env var: `openai/gpt-oss-20b` (OpenAI's 20B open-weights, Aug 2025) or `llama-3.3-70b-versatile` — **both are gated per-account on Groq's free tier and return `403 Forbidden` on some accounts**. Always verify via a test `/chat` call after switching; if you see "All LLM providers exhausted. Last error: HTTP Error 403", revert to the 8B default. |
 | `GROQ_URL` | `https://api.groq.com/openai/v1` | Swap to any OpenAI-compatible free endpoint without a code change — e.g. `https://api.cerebras.ai/v1` (Cerebras free tier) or OpenRouter. Useful escape hatch if Groq's key system misbehaves. |
 | `ANONYMIZED_TELEMETRY` | `false` (set in Dockerfile + scripts) | Disables ChromaDB anonymous telemetry. |
 | `HF_HUB_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops huggingface_hub from pinging HF servers at runtime. |
