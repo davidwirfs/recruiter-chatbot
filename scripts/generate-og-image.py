@@ -56,14 +56,21 @@ def main() -> None:
     font_name = ImageFont.truetype(FONT_REGULAR, 26)
     font_question = ImageFont.truetype(FONT_ITALIC, 38)
 
-    # 1. Header — "David Wirfs" top-left
-    draw.text((90, 60), "David Wirfs", fill=COLOR_TEXT, font=font_name)
+    # Safe-crop band: LinkedIn Featured center-crops 1200x627 down to roughly
+    # 1:1 (visible area = 627x627 centered horizontally → x=287 to x=913).
+    # All critical content must sit inside this band so it survives both the
+    # full 1.91:1 OG preview AND the LinkedIn Featured square crop.
+    SAFE_LEFT = 290
+    SAFE_RIGHT = 910
 
-    # 2. Logo top-right (small, NOT the headline — per Jobs)
+    # 1. Header — "David Wirfs" inside safe-left
+    draw.text((SAFE_LEFT, 60), "David Wirfs", fill=COLOR_TEXT, font=font_name)
+
+    # 2. Logo inside safe-right (small, NOT the headline — per Jobs)
     logo = Image.open(LOGO_PATH).convert("RGBA")
     logo_size = 48
     logo_resized = logo.resize((logo_size, logo_size), Image.LANCZOS)
-    logo_x = W - 90 - logo_size
+    logo_x = SAFE_RIGHT - logo_size
     logo_y = 60 - 6
     canvas.paste(logo_resized, (logo_x, logo_y), logo_resized)
 
@@ -84,11 +91,11 @@ def main() -> None:
         width=2,
     )
 
-    # 5. Underline — the chatbot's input-field bottom border
+    # 5. Underline — narrow to match the safe-crop band so it stays
+    # visually balanced both in the 1.91:1 preview and the LinkedIn 1:1 crop.
     underline_y = qy + qh + 24
-    underline_inset = 180
     draw.line(
-        (underline_inset, underline_y, W - underline_inset, underline_y),
+        (SAFE_LEFT, underline_y, SAFE_RIGHT, underline_y),
         fill=COLOR_LINE,
         width=2,
     )
@@ -96,6 +103,7 @@ def main() -> None:
     canvas.save(OUTPUT_PATH, "PNG", optimize=True)
     print(f"Saved: {OUTPUT_PATH}")
     print(f"Size: {W}x{H}")
+    print(f"Safe-crop band: x={SAFE_LEFT} to x={SAFE_RIGHT}")
 
 
 if __name__ == "__main__":
