@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>David Wirfs</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #a1a1a6;
+    --line: #d2d2d7;
+    --line-focus: #1d1d1f;
+    --error: #b00020;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { height: 100%; }
+  body {
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: 400;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0 24px;
+    max-width: 720px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 32px 0 16px 0;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  .name {
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
+  .logo {
+    height: 28px;
+    width: auto;
+    display: block;
+    flex-shrink: 0;
+  }
+  .stream {
+    display: flex;
+    flex-direction: column;
+    gap: 64px;
+    padding: 32px 0 32px 0;
+    flex: 1;
+  }
+  .letter {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    opacity: 0;
+    animation: letter-in 0.45s var(--ease) forwards;
+    scroll-margin-top: 96px;
+    scroll-margin-bottom: 160px;
+    /* scroll-margin-top reserves space for the sticky header (~76px)
+       when scrollIntoView({block:"start"}) is called on a new letter.
+       scroll-margin-bottom reserves space for the sticky input
+       (~140px) when scrollIntoView({block:"end"}) is called during
+       streaming so the latest tokens stay visible above the input. */
+  }
+  @keyframes letter-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .letter .q {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    letter-spacing: 0.01em;
+  }
+  .letter .a {
+    font-size: 19px;
+    font-weight: 400;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    min-height: 28px;
+  }
+  .letter .src {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
+    margin-top: 12px;
+    opacity: 0;
+    animation: letter-in 0.4s var(--ease) 0.1s forwards;
+  }
+  .typing {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    height: 24px;
+  }
+  .typing span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    animation: pulse 1.4s infinite ease-in-out;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+  .input-wrap {
+    margin-top: auto;
+    padding: 24px 0 56px 0;
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+    z-index: 10;
+    transform: translateY(calc(-50vh + 100px));
+    transition: transform 0.7s var(--ease);
+    /* 100px = bottom padding (56px) + half input height (~44px including
+       row padding) — calibrated to viewport-center the input in empty
+       state. position: sticky bottom: 0 keeps the input pinned to the
+       viewport bottom when conversations grow past 100vh. */
+  }
+  .page.has-conversation .input-wrap {
+    transform: translateY(0);
+  }
+  .input-row {
+    position: relative;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .input {
+    width: 100%;
+    font-family: inherit;
+    font-size: 22px;
+    font-weight: 400;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--line);
+    padding: 14px 32px 14px 4px;
+    color: var(--text);
+    outline: none;
+    text-align: left;
+    line-height: 1.4;
+    transition: border-bottom-color 0.3s ease;
+  }
+  .submit-hint {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    color: var(--text-tertiary);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+  .submit-hint.visible {
+    opacity: 1;
+  }
+  .input:focus {
+    border-bottom-color: var(--line-focus);
+  }
+  .input::placeholder {
+    color: var(--text-secondary);
+    font-style: italic;
+    opacity: 1;
+    transition: opacity 0.5s ease;
+  }
+  .input.swap::placeholder {
+    opacity: 0;
+  }
+  .input:disabled {
+    opacity: 0.4;
+  }
+  .error {
+    color: var(--error);
+    font-size: 14px;
+    margin-top: 16px;
+    text-align: left;
+  }
+  @media (max-width: 600px) {
+    .page { padding: 0 16px; }
+    .header { padding: 20px 0 12px 0; }
+    .logo { height: 24px; }
+    .stream { gap: 48px; padding: 24px 0 24px 0; }
+    .letter { scroll-margin-top: 72px; scroll-margin-bottom: 120px; }
+    .letter .a { font-size: 17px; }
+    .input { font-size: 18px; }
+    .input-wrap { padding: 16px 0 36px 0; transform: translateY(calc(-50vh + 70px)); }
+    /* Mobile: 36px bottom padding + ~34px half input row height = 70px. */
+    .page.has-conversation .input-wrap { transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<div class="page" id="page">
+  <div class="header">
+    <div class="name">David Wirfs</div>
+    <img class="logo" src="/static/blitzscale-logo-128.png" alt="blitzscale.it Holding" />
+  </div>
+  <div class="stream" id="stream"></div>
+  <div class="input-wrap">
+    <div class="input-row">
+      <input
+        class="input"
+        id="input"
+        placeholder="What has he shipped at scale?"
+        autofocus
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <span class="submit-hint" id="submit-hint" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 10 4 15 9 20"></polyline>
+          <path d="M20 4v7a4 4 0 0 1-4 4H4"></path>
+        </svg>
+      </span>
+    </div>
+    <div class="error" id="error" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const PLACEHOLDERS = [
+  "What has he shipped at scale?",
+  "What is he building now?",
+  "What does he need from his next role?"
+];
+
+const pageEl     = document.getElementById("page");
+const streamEl   = document.getElementById("stream");
+const inputEl    = document.getElementById("input");
+const errorEl    = document.getElementById("error");
+const submitHint = document.getElementById("submit-hint");
+let placeholderIdx = 0;
+let busy = false;
+
+inputEl.focus();
+
+// Show ↵ hint only when there is text in the field
+function updateSubmitHint() {
+  if (inputEl.value.length > 0 && !busy) {
+    submitHint.classList.add("visible");
+  } else {
+    submitHint.classList.remove("visible");
+  }
+}
+inputEl.addEventListener("input", updateSubmitHint);
+
+// Cross-fade placeholder rotation while input is empty + idle
+setInterval(() => {
+  if (inputEl.value !== "" || busy) return;
+  // Fade out current
+  inputEl.classList.add("swap");
+  setTimeout(() => {
+    placeholderIdx = (placeholderIdx + 1) % PLACEHOLDERS.length;
+    inputEl.placeholder = PLACEHOLDERS[placeholderIdx];
+    inputEl.classList.remove("swap");
+  }, 500);
+}, 3200);
+
+// Submit on Enter
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !busy) {
+    e.preventDefault();
+    const text = inputEl.value.trim();
+    if (text) send(text);
+  }
+});
+
+async function send(text) {
+  busy = true;
+  inputEl.value = "";
+  inputEl.disabled = true;
+  errorEl.style.display = "none";
+  updateSubmitHint();
+
+  // First message: shift input down to bottom of page
+  if (!pageEl.classList.contains("has-conversation")) {
+    pageEl.classList.add("has-conversation");
+  }
+
+  // Build a letter block: question + answer + (optional) sources
+  const letter = document.createElement("div");
+  letter.className = "letter";
+
+  const q = document.createElement("div");
+  q.className = "q";
+  q.textContent = text;
+  letter.appendChild(q);
+
+  const a = document.createElement("div");
+  a.className = "a";
+  const typing = document.createElement("div");
+  typing.className = "typing";
+  typing.innerHTML = "<span></span><span></span><span></span>";
+  a.appendChild(typing);
+  letter.appendChild(a);
+
+  streamEl.appendChild(letter);
+  // Initial smooth scroll: bring the question into view at the top
+  // (just below the sticky header).
+  setTimeout(() => {
+    letter.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 80);
+
+  // Auto-follow control: once tokens start arriving, switch to bottom-
+  // anchored auto-scroll so the latest content stays visible above the
+  // sticky input. If the user scrolls UP manually during streaming
+  // (more than ~80px of upward intent), we stop following so they can
+  // read earlier content without being yanked back.
+  let followBottom = true;
+  let lastSeenScrollY = window.scrollY;
+  const onScrollDuringStream = () => {
+    if (window.scrollY < lastSeenScrollY - 80) {
+      followBottom = false;
+    }
+    lastSeenScrollY = window.scrollY;
+  };
+  window.addEventListener("scroll", onScrollDuringStream, { passive: true });
+
+  let citations = [];
+  let buffer = "";
+  let typingRemoved = false;
+
+  try {
+    const resp = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, top_k: 5 }),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let leftover = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = leftover + decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n\n");
+      leftover = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6);
+        let evt;
+        try { evt = JSON.parse(payload); } catch { continue; }
+
+        if (evt.type === "citations") {
+          citations = evt.citations || [];
+        } else if (evt.type === "token") {
+          if (!typingRemoved) {
+            a.removeChild(typing);
+            typingRemoved = true;
+          }
+          buffer += evt.content;
+          a.textContent = buffer;
+          if (followBottom) {
+            letter.scrollIntoView({ behavior: "instant", block: "end" });
+            lastSeenScrollY = window.scrollY;
+          }
+        } else if (evt.type === "error") {
+          if (!typingRemoved) {
+            a.removeChild(typing);
+            typingRemoved = true;
+          }
+          errorEl.textContent = "Something went wrong: " + evt.message;
+          errorEl.style.display = "block";
+        }
+      }
+    }
+
+    if (citations.length) {
+      const sources = [...new Set(citations.map(c => c.source_label))];
+      const src = document.createElement("div");
+      src.className = "src";
+      src.textContent = sources.join(" · ");
+      letter.appendChild(src);
+    }
+  } catch (e) {
+    if (!typingRemoved && a.contains(typing)) {
+      a.removeChild(typing);
+    }
+    errorEl.textContent = "Something went wrong: " + e.message;
+    errorEl.style.display = "block";
+  } finally {
+    window.removeEventListener("scroll", onScrollDuringStream);
+    busy = false;
+    inputEl.disabled = false;
+    inputEl.focus();
+  }
+}
+</script>
+
+</body>
+</html>

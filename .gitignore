@@ -1,0 +1,30 @@
+# --- Derived data (regenerate via `./scripts/2-ingest.sh`) -------------------
+chroma/
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.Python
+*.egg-info/
+
+# --- Editor / OS -------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- HF / model caches -------------------------------------------------------
+.cache/
+
+# --- Environment secrets -----------------------------------------------------
+.env
+.env.local
+*.key
+*.token
+
+# --- Local-machine artifacts that shouldn't be in the public repo ------------
+data/.archive/
