@@ -62,8 +62,8 @@ Browser (recruiter)
       │                 │
       ▼                 ▼
 ┌──────────┐      ┌──────────────────────────┐
-│ ChromaDB │      │ Groq Inference API       │  ← llama-3.1-8b-instant
-│ (in-     │      │ (cloud, free tier,       │     ~700 tok/sec
+│ ChromaDB │      │ Gemini API               │  ← gemini-2.0-flash
+│ (in-     │      │ (Google, free tier,      │     low latency
 │  image)  │      │  OpenAI-compatible)      │     overridable via env
 └────┬─────┘      └──────────────────────────┘
      │
@@ -73,13 +73,18 @@ chroma/ ← embedded chunks, built INTO the Docker image
 ```
 
 **Stack:** FastAPI · ChromaDB · sentence-transformers/all-MiniLM-L6-v2 ·
-Groq Inference API (Llama 3.1 8B by default) · slowapi for rate limiting.
+Google Gemini API (`gemini-2.0-flash` by default) · slowapi for rate limiting.
 Open source. Free tier covers any realistic LinkedIn-recruiter volume.
 
-There is a separate **local development version** that swaps the Groq
+There is a separate **local development version** that swaps the Gemini
 LLM call for a local Ollama daemon — that lives in the parent project
 folder, not in this repo. The version in THIS repo is the public-deploy
 variant.
+
+> **Why Gemini, not Groq:** v0.4.x used Groq's inference API. During public
+> deploy we hit repeated `invalid_api_key` rejections from Groq despite
+> freshly-created keys and correctly-passed env vars. We swapped to Gemini
+> in v0.5.0 — same OpenAI-compatible interface, more reliable free tier.
 
 ---
 
@@ -95,8 +100,9 @@ YAML frontmatter at the top of this README. Steps:
    - SDK: **Docker** (matches `sdk: docker` in frontmatter)
    - Public visibility
 2. In the new Space's Settings → Variables and secrets, add:
-   - `GROQ_API_KEY` = your key from
-     [console.groq.com](https://console.groq.com) (free tier)
+   - `GEMINI_API_KEY` = your key from
+     [aistudio.google.com/apikey](https://aistudio.google.com/apikey) (free tier,
+     no billing setup required)
 3. Connect the Space to this GitHub repo, OR add the Space as a second
    git remote and push:
    ```bash
@@ -116,7 +122,7 @@ Useful if you want to test changes before pushing to HF Spaces.
 
 ### Prerequisites
 - macOS or Linux, Python 3.11+
-- A free Groq API key from [console.groq.com](https://console.groq.com)
+- A free Gemini API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 
 ### Three commands
 
@@ -125,7 +131,7 @@ git clone https://github.com/davidwirfs/recruiter-chatbot.git
 cd recruiter-chatbot
 ./scripts/1-setup.sh
 ./scripts/2-ingest.sh
-GROQ_API_KEY=gsk_... ./scripts/3-serve.sh
+GEMINI_API_KEY=... ./scripts/3-serve.sh
 ```
 
 Open http://localhost:8000. Page is empty by default — start typing.
@@ -150,9 +156,9 @@ container rebuilds with the new content baked in.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `GROQ_API_KEY` | _(required)_ | Your Groq API key. Set in HF Space → Settings → Variables and secrets. |
-| `GROQ_MODEL` | `llama-3.1-8b-instant` | Override to `llama-3.3-70b-versatile` for higher answer quality (tighter free-tier rate limits). |
-| `GROQ_URL` | `https://api.groq.com/openai/v1` | Rarely changed. |
+| `GEMINI_API_KEY` | _(required)_ | Your Gemini API key. Set in HF Space → Settings → Variables and secrets. |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Alternatives: `gemini-2.5-flash` (newer, higher quality) or `gemini-1.5-flash` (older fallback). |
+| `GEMINI_URL` | `https://generativelanguage.googleapis.com/v1beta/openai` | Rarely changed. |
 | `ANONYMIZED_TELEMETRY` | `false` (set in Dockerfile + scripts) | Disables ChromaDB anonymous telemetry. |
 | `HF_HUB_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops huggingface_hub from pinging HF servers at runtime. |
 | `TRANSFORMERS_OFFLINE` | `1` (set in Dockerfile + scripts after model cache) | Stops transformers from version checks at runtime. |
@@ -166,11 +172,12 @@ your hosting provider) controls. The retrieval side (Chroma + embeddings)
 runs entirely inside the deployed container — no outbound calls during
 normal operation.
 
-The **LLM inference call** goes out to Groq's API (one inference call
-per recruiter question). Groq sees the question text and the retrieved
-context chunks. They do not retain content for training per their
-published policy, but if you're concerned, the local development version
-(parent project, not this repo) keeps inference local via Ollama.
+The **LLM inference call** goes out to Google's Gemini API (one inference
+call per recruiter question). Gemini sees the question text and the retrieved
+context chunks. Per Google's published policy for free-tier AI Studio usage,
+prompts and responses may be used to improve Google's products — if that's
+a concern, the local development version (parent project, not this repo)
+keeps inference fully local via Ollama and never sends data to any cloud.
 
 A small privacy notice on the UI reminds users not to share confidential
 information.
@@ -185,9 +192,9 @@ information.
 - **Chunking:** LangChain `RecursiveCharacterTextSplitter`, 800 chars
   with 100 overlap. Markdown source files preserved structural boundaries
   through chunking far better than PDFs did.
-- **LLM:** `llama-3.1-8b-instant` via Groq's OpenAI-compatible
-  streaming API. Free tier as of mid-2026: 30 req/min, 14,400 tok/min,
-  500,000 tok/day — more than enough for a LinkedIn-driven recruiter
+- **LLM:** `gemini-2.0-flash` via Google's OpenAI-compatible Gemini
+  streaming API. Free tier as of mid-2026: ~15 req/min, ~1M tok/min,
+  ~1,500 req/day — far more than enough for a LinkedIn-driven recruiter
   chatbot.
 - **Rate limiting:** slowapi, 20 req/hour per real client IP (parsed
   from `X-Forwarded-For` to defeat HF Spaces' reverse-proxy IP collapse).

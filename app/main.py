@@ -3,7 +3,7 @@ main.py — FastAPI backend for the recruiter chatbot (public-deploy version).
 
 Endpoints:
   GET  /            → serve the chat UI (static/index.html)
-  GET  /health      → health check (Chroma collection + Groq config)
+  GET  /health      → health check (Chroma collection + Gemini config)
   POST /chat        → streamed chat answer (text/event-stream)
 
 Public-deploy hardening (Phase 2b/3):
@@ -17,8 +17,8 @@ Public-deploy hardening (Phase 2b/3):
   embed-it-in-an-iframe use case work without further config.
 
 Local development of this public-deploy version still works as long as
-GROQ_API_KEY is set:
-  GROQ_API_KEY=gsk_... python -m uvicorn app.main:app --reload --port 8000
+GEMINI_API_KEY is set:
+  GEMINI_API_KEY=... python -m uvicorn app.main:app --reload --port 8000
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from .ingest import COLLECTION_NAME
-from .llm import GROQ_MODEL, health_check, stream_chat
+from .llm import GEMINI_MODEL, health_check, stream_chat
 from .prompt import SYSTEM_PROMPT, build_user_message
 from .retriever import _get_collection, retrieve
 
@@ -72,7 +72,7 @@ def real_client_ip(request: Request) -> str:
 
 limiter = Limiter(key_func=real_client_ip)
 
-app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.4.0")
+app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.5.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -100,7 +100,7 @@ def index():
 
 @app.get("/health")
 def health():
-    """Sanity-check Chroma + Groq configuration before the recruiter sends a message."""
+    """Sanity-check Chroma + Gemini configuration before the recruiter sends a message."""
     try:
         coll = _get_collection()
         chroma_ok = True
@@ -122,7 +122,7 @@ def health():
             "error": chroma_error,
         },
         "llm": llm,
-        "model": GROQ_MODEL,
+        "model": GEMINI_MODEL,
     }
 
 

@@ -1,21 +1,26 @@
 """
-llm.py — Groq LLM client (HuggingFace Spaces / public-deploy version).
+llm.py — Gemini LLM client (HuggingFace Spaces / public-deploy version).
 
 Replaces the local Ollama client used in the development version with a call
-to Groq's OpenAI-compatible streaming API. Groq serves Llama 3.1/3.3 models
-with very fast inference (~700 tok/sec on the 8B model) on a generous free
-tier that's more than enough for a LinkedIn-facing recruiter chatbot.
+to Google's Gemini API via its OpenAI-compatible streaming endpoint. Gemini's
+free tier is generous and well-trodden — ~15 RPM and 1,500 requests/day on
+`gemini-2.0-flash`, more than enough for a LinkedIn-facing recruiter chatbot.
 
-Requires GROQ_API_KEY in the environment. On HuggingFace Spaces this is set
-once via:  Space → Settings → Variables and secrets → New secret → GROQ_API_KEY.
+Why Gemini (and not Groq, the previous default): Groq's account/key system
+caused repeated `invalid_api_key` rejections during the v0.4.x deploy despite
+freshly-created valid keys and correct env-var passing through HF Spaces.
+Gemini's free tier is well-trodden, doesn't have those issues, and its
+OpenAI-compatible endpoint means the existing streaming code keeps working
+with minimal changes.
 
-Default model: `llama-3.1-8b-instant` — matches the local-Ollama llama3.1 8B
-behavior for parity with the dev experience. Free-tier limits as of mid-2026:
-30 req/min, 14,400 tok/min, 500,000 tok/day.
+Requires GEMINI_API_KEY in the environment. On HuggingFace Spaces this is set
+once via:  Space → Settings → Variables and secrets → New secret → GEMINI_API_KEY.
+Get a free key at https://aistudio.google.com/apikey (no billing setup needed
+for the free tier).
 
-Upgrade path: set GROQ_MODEL=llama-3.3-70b-versatile via Space env var for
-higher answer quality. Tighter rate limits (6,000 tok/min, 100,000 tok/day)
-but more than enough for a LinkedIn-link's recruiter traffic.
+Default model: `gemini-2.0-flash` — fast, low-latency, free tier. Override
+via the GEMINI_MODEL env var (e.g. `gemini-2.5-flash` for higher answer
+quality if available on your account, or `gemini-1.5-flash` as a fallback).
 
 Uses stdlib urllib only — no extra SDK dependency.
 """
@@ -27,9 +32,12 @@ import os
 import urllib.request
 from typing import Generator
 
-GROQ_URL = os.environ.get("GROQ_URL", "https://api.groq.com/openai/v1")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GEMINI_URL = os.environ.get(
+    "GEMINI_URL",
+    "https://generativelanguage.googleapis.com/v1beta/openai",
+)
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 
 def stream_chat(
@@ -37,16 +45,16 @@ def stream_chat(
     user_message: str,
     temperature: float = 0.3,
 ) -> Generator[str, None, None]:
-    """Yield response tokens from Groq's OpenAI-compatible streaming API."""
-    if not GROQ_API_KEY:
+    """Yield response tokens from Gemini's OpenAI-compatible streaming API."""
+    if not GEMINI_API_KEY:
         raise RuntimeError(
-            "GROQ_API_KEY not configured. Set it in HuggingFace Space → "
+            "GEMINI_API_KEY not configured. Set it in HuggingFace Space → "
             "Settings → Variables and secrets, or in your local .env "
             "if testing the public-deploy version outside HF."
         )
 
     payload = {
-        "model": GROQ_MODEL,
+        "model": GEMINI_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -56,11 +64,11 @@ def stream_chat(
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        f"{GROQ_URL}/chat/completions",
+        f"{GEMINI_URL}/chat/completions",
         data=data,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Authorization": f"Bearer {GEMINI_API_KEY}",
         },
         method="POST",
     )
@@ -87,16 +95,16 @@ def stream_chat(
 
 
 def health_check() -> dict:
-    """Return whether Groq credentials are configured.
+    """Return whether Gemini credentials are configured.
 
-    Note: we deliberately do NOT make a probe call to Groq from /health
+    Note: we deliberately do NOT make a probe call to Gemini from /health
     — that would consume rate-limit quota on every health hit (which the
     frontend pings on every page load). Configuration check is enough;
     the first /chat request surfaces any actual API issue.
     """
     return {
-        "provider": "groq",
-        "configured_model": GROQ_MODEL,
-        "api_key_set": bool(GROQ_API_KEY),
-        "endpoint": GROQ_URL,
+        "provider": "gemini",
+        "configured_model": GEMINI_MODEL,
+        "api_key_set": bool(GEMINI_API_KEY),
+        "endpoint": GEMINI_URL,
     }

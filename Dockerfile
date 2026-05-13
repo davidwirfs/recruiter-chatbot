@@ -5,11 +5,13 @@
 # Runtime: uvicorn on port 7860 (HF Spaces convention).
 #
 # Required env vars (set in Space → Settings → Variables and secrets):
-#   GROQ_API_KEY    — your Groq API key (free tier, console.groq.com)
+#   GEMINI_API_KEY  — your Gemini API key (free tier, aistudio.google.com/apikey)
 # Optional overrides:
-#   GROQ_MODEL      — default "llama-3.1-8b-instant"; upgrade path
-#                     "llama-3.3-70b-versatile" for higher answer quality.
-#   GROQ_URL        — default "https://api.groq.com/openai/v1"; rarely changed.
+#   GEMINI_MODEL    — default "gemini-2.0-flash"; alternatives include
+#                     "gemini-2.5-flash" (newer, higher quality if available
+#                     on your account) or "gemini-1.5-flash" (older fallback).
+#   GEMINI_URL      — default "https://generativelanguage.googleapis.com/v1beta/openai";
+#                     rarely changed.
 
 FROM python:3.11-slim
 
