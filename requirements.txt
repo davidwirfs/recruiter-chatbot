@@ -1,5 +1,4 @@
-# Recruiter chatbot — Phase 1 (local, zero API cost)
-# Schema-aligned with _ecosystem/rag/requirements.txt where it overlaps.
+# Recruiter chatbot — public deployment (HF Spaces).
 
 # Vector store
 chromadb>=0.5.0
@@ -7,15 +6,18 @@ chromadb>=0.5.0
 # Chunking
 langchain-text-splitters>=0.3.0
 
-# Embeddings (local, no API key)
+# Embeddings (local model, cached in the Docker image at build time)
 sentence-transformers>=3.0.0
 
-# PDF parsing
+# PDF parsing (kept for backward compatibility; current sources are markdown)
 pypdf>=4.0.0
 
 # Web framework
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
+
+# Public-deploy hardening
+slowapi>=0.1.9
 
 # Standard helpers
 pyyaml>=6.0

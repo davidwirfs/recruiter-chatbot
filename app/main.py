@@ -6,12 +6,18 @@ Endpoints:
   GET  /health      → health check (Chroma collection + Groq config)
   POST /chat        → streamed chat answer (text/event-stream)
 
-This is the public-deploy variant that talks to Groq's hosted Llama models
-instead of a local Ollama daemon. See app/llm.py for the LLM client; see
-the project root README for the full HF Spaces deployment instructions.
+Public-deploy hardening (Phase 2b/3):
+- Per-IP rate limit on /chat (20 requests/hour) via slowapi.
+- Real-IP detection through X-Forwarded-For so HF Spaces' reverse proxy
+  doesn't make every request look like it's coming from the same gateway.
+- Pydantic-enforced message length cap (500 chars) — rejects oversized
+  payloads before they reach the LLM.
+- CORS deliberately permissive: the chatbot has no auth, no cookies, no
+  cross-origin state. Wildcard origins are harmless here and let any
+  embed-it-in-an-iframe use case work without further config.
 
-Local development of THIS public-deploy version still works as long as
-GROQ_API_KEY is set in the environment:
+Local development of this public-deploy version still works as long as
+GROQ_API_KEY is set:
   GROQ_API_KEY=gsk_... python -m uvicorn app.main:app --reload --port 8000
 """
 
@@ -20,11 +26,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from .ingest import COLLECTION_NAME
 from .llm import GROQ_MODEL, health_check, stream_chat
@@ -35,10 +44,39 @@ from .retriever import _get_collection, retrieve
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = PROJECT_ROOT / "static"
 
-app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.4.0")
+# Hard cap on incoming message length. 500 chars covers any realistic
+# recruiter question; longer payloads are either a prompt-injection
+# attempt or noise.
+MAX_MESSAGE_CHARS = 500
 
-# CORS open for now — will tighten to the actual HF Space hostname once
-# the deploy URL is known (Phase 2b commit covering rate-limiting + CORS).
+# Per-IP rate limit on /chat. Recruiters typically ask 1-5 questions per
+# session; 20/hour gives plenty of headroom while shutting down scripted
+# abuse and accidental tight-loop refreshes.
+CHAT_RATE_LIMIT = "20/hour"
+
+
+def real_client_ip(request: Request) -> str:
+    """Extract the real client IP behind HF Spaces' reverse proxy.
+
+    HF Spaces (like any cloud host) terminates TLS at a load balancer and
+    forwards the request to our container. Without this helper, slowapi
+    would see every request as coming from the load balancer's internal IP
+    and rate-limit everyone in aggregate. X-Forwarded-For carries the
+    original client IP as the first comma-separated entry.
+    """
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=real_client_ip)
+
+app = FastAPI(title="David Wirfs — Recruiter Chatbot", version="0.4.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS: see module docstring on why this stays permissive.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -50,8 +88,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 class ChatRequest(BaseModel):
-    message: str
-    top_k: int = 5
+    message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_CHARS)
+    top_k: int = Field(default=5, ge=1, le=20)
 
 
 @app.get("/")
@@ -89,8 +127,15 @@ def health():
 
 
 @app.post("/chat")
-def chat(req: ChatRequest):
-    """Stream a recruiter-aware answer back to the client."""
+@limiter.limit(CHAT_RATE_LIMIT)
+def chat(request: Request, req: ChatRequest):
+    """Stream a recruiter-aware answer back to the client.
+
+    Rate-limited per real client IP (X-Forwarded-For-aware) to
+    `CHAT_RATE_LIMIT`. Message length is pydantic-validated to
+    `MAX_MESSAGE_CHARS`; oversized payloads return 422 before the
+    handler body runs.
+    """
     if not req.message or not req.message.strip():
         raise HTTPException(status_code=400, detail="empty message")
 
