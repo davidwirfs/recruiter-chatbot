@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -117,16 +118,24 @@ def _stream_provider(
     try:
         resp_cm = urllib.request.urlopen(req, timeout=120)
     except urllib.error.HTTPError as e:
-        # Read the response body so a future caller (or operator
-        # tailing logs) can see *why* the provider rejected us.
-        # Without this, a 403 from Groq looks identical regardless
-        # of cause (bad key vs. model-not-available vs. quota).
+        # Read the response body so the failure reason is visible
+        # in container logs (HF Space → Logs tab). We can't mutate
+        # e.reason (it's a read-only property on HTTPError), so we
+        # attach the body as a fresh attribute and print to stderr.
+        # The retry/failover layer still sees the same exception
+        # type and status code — only logging is enriched.
         try:
             body = e.read().decode("utf-8", errors="replace")[:500]
         except Exception:
             body = ""
+        e.response_body = body  # readable by callers if needed
         if body:
-            e.reason = f"{e.reason} | body: {body}"
+            print(
+                f"[llm] HTTP {e.code} from {provider['name']} "
+                f"({provider['url']}, model={provider['model']}): {body}",
+                file=sys.stderr,
+                flush=True,
+            )
         raise
     with resp_cm as resp:
         for raw_line in resp:
